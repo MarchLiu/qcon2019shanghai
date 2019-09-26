@@ -12,4 +12,4 @@
                  [cheshire "5.8.1"]
                  [clojure.java-time "0.3.2"]]
   :source-paths ["src/main/clojure"]
-  :repl-options {:init-ns com.quantfabrik.qcon.cte})
+  :repl-options {:init-ns com.quantfabrik.qcon.repl})
