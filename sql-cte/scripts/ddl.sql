@@ -402,7 +402,8 @@ with partials as (select layer, idx, ordinality, partial
                         join intercept_trained as i on w.layer = i.layer and w.idx = i.idx)
 update ml.node
 set w = train.w,
-    b = train.b
+    b = train.b,
+    version = version +1
 from train
 where node.layer = train.layer
   and node.idx = train.idx
@@ -419,8 +420,39 @@ from ml.t
 where r.layer = (select max(layer) from ml.results);
 $$ language SQL immutable;
 
+create or replace function ml.train(eta float, cost_range float)
+    returns setof float
+as
+$$
+declare
+    c float;
+begin
+    loop
+        delete from ml.results where id > 0;
+        alter sequence ml.results_id_seq restart;
+        insert into ml.results(group_id, layer, idx, zeta, alpha)
+        select group_id, layer, idx, zeta, alpha
+        from ml.resolve();
+        c = ml.cost();
+        if c < cost_range then
+            return;
+            else
+            return next c;
+        end if;
+        perform ml.update_output_delta();
+        perform ml.update_hidden_delta(2);
+        perform ml.update_partial_differential();
+        perform ml.train_once(eta);
+    end loop;
+end;
+$$ language PLPGSQL;
+
 create or replace function ml.binary()
-    returns table (group_id int, value int)
+    returns table
+            (
+                group_id int,
+                value    int
+            )
 as
 $$
 with data as (select group_id, alpha
@@ -431,5 +463,6 @@ with data as (select group_id, alpha
          select group_id, array_agg(alpha) as pair
          from data
          group by group_id)
-    select group_id, case when pair[1] > pair[2] then 0 else 1 end as value from cluster;
+select group_id, case when pair[1] > pair[2] then 0 else 1 end as value
+from cluster;
 $$ language SQL;
