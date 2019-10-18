@@ -74,3 +74,38 @@
         (recur (-> (jdbc/query db ["select ml.cost()"])
                    first
                    :cost))))))
+
+(defn binary
+  [x]
+  (let [d 0.3]
+    (cond
+      (< 0 (- 1 x) d) 1
+      (< 0 x d) 0
+      :else -1)))
+
+(defn extract
+  [entity]
+  [(key entity)
+   (->> entity
+        val
+        (map #(dissoc % :group_id))
+        (group-by :idx))])
+
+(defn res []
+  (let [data (->> (jdbc/query
+                    db
+                    ["select group_id, idx, alpha from ml.resolve() where layer = 3;"])
+                  (map #(update % :alpha binary))
+                  (group-by :group_id)
+                  (into (sorted-map) (map extract)))
+        t (->> (jdbc/query
+                 db
+                 ["select  group_id, idx, value as t from ml.t"])
+               (map #(update % :t int))
+               (group-by :group_id)
+               (into (sorted-map) (map extract)))]
+    (merge-with (fn
+                  [x y]
+                  (merge-with #(-> (merge (first %1) (first %2))
+                                   (dissoc :idx)) x y))
+                data t)))
