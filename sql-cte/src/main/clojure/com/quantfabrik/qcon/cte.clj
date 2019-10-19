@@ -42,7 +42,7 @@
   [db]
   (loop [level 1
          rows (jdbc/query db [(str "update tree set level=? "
-                                   "where pid = 0 "
+                                   "where pid = id "
                                    "returning id") level])]
     (if (empty? (doall rows))
       (println "completed at level " (dec level))
