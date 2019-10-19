@@ -1,6 +1,7 @@
 (ns com.quantfabrik.qcon.cte
   (:require [clj-postgresql.core :as pg]
-            [clojure.java.jdbc :as jdbc]))
+            [clojure.java.jdbc :as jdbc]
+            [clojure.core.async :as async]))
 
 (def db (pg/pool :dbname "qcon"))
 
@@ -27,8 +28,9 @@
   (dotimes [idx size]
     (let [id (-> db
                  (jdbc/query
-                   ["insert into tree(pid) values(?) returning id"
-                    (rand-pid idx)])
+                   [(str "insert into tree(pid)"
+                         " select (random()*last_value)::bigint"
+                         " from tree_id_seq returning id")])
                  first
                  :id)]
       (when (zero? (mod id 10000))

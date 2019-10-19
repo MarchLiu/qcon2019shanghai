@@ -3,7 +3,7 @@
             [clj-postgresql.core :as pg]
             [clojure.java.jdbc :as jdbc]))
 
-(def db (pg/spec :dbname "qcon"))
+(def db (pg/pool :dbname "qcon"))
 
 (defn parse-int
   [item]
