@@ -3,7 +3,7 @@
             [clj-postgresql.core :as pg]
             [clojure.java.jdbc :as jdbc]))
 
-(def db (pg/pool :dbname "qcon"))
+(def db (pg/spec :dbname "qcon"))
 
 (defn parse-int
   [item]
@@ -51,29 +51,46 @@
   (jdbc/execute! db ["alter sequence ml.results_id_seq restart;"])
   (jdbc/execute! db ["insert into ml.node(network_id, version, layer, idx, w, b) select 1, 0, layer, idx, w, b from ml.rand_network('{12, 3, 2}'::int[]);"]))
 
+(defn train-once
+  [eta]
+  (jdbc/query db ["select * from ml.update_delta();"])
+  (jdbc/query db ["select * from ml.update_partial_differential();"])
+  (jdbc/query db ["select * from ml.train_once(?);" eta])
+  (jdbc/execute! db ["delete from ml.results;"])
+  (jdbc/execute! db ["alter sequence ml.results_id_seq restart;"])
+  (jdbc/execute! db ["insert into ml.results(group_id, layer, idx, zeta, alpha) select group_id, layer, idx, zeta, alpha from ml.resolve();"]))
+
 (defn train
   [eta cost]
   (jdbc/execute! db ["delete from ml.results where id > 0;"])
   (jdbc/execute! db ["alter sequence ml.results_id_seq restart;"])
   (jdbc/execute! db ["insert into ml.results(group_id, layer, idx, zeta, alpha) select group_id, layer, idx, zeta, alpha from ml.resolve();"])
-  (loop [c (-> (jdbc/query db ["select ml.cost()"])
+  (loop [eta eta
+         c (-> (jdbc/query db ["select ml.cost()"])
                first
-               :cost)]
-    (if (< c cost)
-      (do
-        (println "finish at " c)
-        c)
-      (do
-        (println "down to " c)
-        (jdbc/query db ["select * from ml.update_delta();"])
-        (jdbc/query db ["select * from ml.update_partial_differential();"])
-        (jdbc/query db ["select * from ml.train_once(?);" eta])
-        (jdbc/execute! db ["delete from ml.results;"])
-        (jdbc/execute! db ["alter sequence ml.results_id_seq restart;"])
-        (jdbc/execute! db ["insert into ml.results(group_id, layer, idx, zeta, alpha) select group_id, layer, idx, zeta, alpha from ml.resolve();"])
-        (recur (-> (jdbc/query db ["select ml.cost()"])
-                   first
-                   :cost))))))
+               :cost)
+         prev (-> (jdbc/query db ["select ml.cost()"])
+                  first
+                  :cost
+                  (+ 5))]
+    (cond
+      (< c cost) (do (println "finish at " c) c)
+      (>= c prev) (let [e (/ eta 2)]
+                    (println (format "reduce eta to %f and try down from %f" e c))
+                    (train-once e)
+                    (recur e
+                           (-> (jdbc/query db ["select ml.cost()"])
+                               first
+                               :cost)
+                           c))
+      :else (do
+              (println "down to " c)
+              (train-once eta)
+              (recur eta
+                     (-> (jdbc/query db ["select ml.cost()"])
+                         first
+                         :cost)
+                     c)))))
 
 (defn binary
   [x]
