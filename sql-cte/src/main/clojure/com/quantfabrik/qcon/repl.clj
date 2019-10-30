@@ -3,7 +3,7 @@
             [clj-postgresql.core :as pg]
             [clojure.java.jdbc :as jdbc]))
 
-(def db (pg/spec :dbname "qcon"))
+(def db (pg/pool :dbname "qcon"))
 
 (defn parse-int
   [item]
@@ -44,7 +44,7 @@
       (jdbc/insert! db :ml.t {:group_id (key kv) :idx 2 :value (second (val kv))}))))
 
 (defn init-network
-  []
+  [db]
   (jdbc/execute! db ["delete from ml.results where id > 0;"])
   (jdbc/execute! db ["alter sequence ml.results_id_seq restart;"])
   (jdbc/execute! db ["delete from ml.node;"])
@@ -52,7 +52,7 @@
   (jdbc/execute! db ["insert into ml.node(network_id, version, layer, idx, w, b) select 1, 0, layer, idx, w, b from ml.rand_network('{12, 3, 2}'::int[]);"]))
 
 (defn train-once
-  [eta]
+  [eta db]
   (jdbc/query db ["select * from ml.update_delta();"])
   (jdbc/query db ["select * from ml.update_partial_differential();"])
   (jdbc/query db ["select * from ml.train_once(?);" eta])
@@ -62,35 +62,36 @@
 
 (defn train
   [eta cost]
-  (jdbc/execute! db ["delete from ml.results where id > 0;"])
-  (jdbc/execute! db ["alter sequence ml.results_id_seq restart;"])
-  (jdbc/execute! db ["insert into ml.results(group_id, layer, idx, zeta, alpha) select group_id, layer, idx, zeta, alpha from ml.resolve();"])
-  (loop [eta eta
-         c (-> (jdbc/query db ["select ml.cost()"])
-               first
-               :cost)
-         prev (-> (jdbc/query db ["select ml.cost()"])
-                  first
-                  :cost
-                  (+ 5))]
-    (cond
-      (< c cost) (do (println "finish at " c) c)
-      (>= c prev) (let [e (/ eta 2)]
-                    (println (format "reduce eta to %f and try down from %f" e c))
-                    (train-once e)
-                    (recur e
-                           (-> (jdbc/query db ["select ml.cost()"])
-                               first
-                               :cost)
-                           c))
-      :else (do
-              (println "down to " c)
-              (train-once eta)
-              (recur eta
-                     (-> (jdbc/query db ["select ml.cost()"])
-                         first
-                         :cost)
-                     c)))))
+  (let [db (pg/spec :dbname "qcon")]
+    (jdbc/execute! db ["delete from ml.results where id > 0;"])
+    (jdbc/execute! db ["alter sequence ml.results_id_seq restart;"])
+    (jdbc/execute! db ["insert into ml.results(group_id, layer, idx, zeta, alpha) select group_id, layer, idx, zeta, alpha from ml.resolve();"])
+    (loop [eta eta
+           c (-> (jdbc/query db ["select ml.cost()"])
+                 first
+                 :cost)
+           prev (-> (jdbc/query db ["select ml.cost()"])
+                    first
+                    :cost
+                    (+ 5))]
+      (cond
+        (< c cost) (do (println "finish at " c) c)
+        (>= c prev) (let [e (/ eta 2)]
+                      (println (format "reduce eta to %f and try down from %f" e c))
+                      (train-once e db)
+                      (recur e
+                             (-> (jdbc/query db ["select ml.cost()"])
+                                 first
+                                 :cost)
+                             c))
+        :else (do
+                (println "down to " c)
+                (train-once eta db)
+                (recur eta
+                       (-> (jdbc/query db ["select ml.cost()"])
+                           first
+                           :cost)
+                       c))))))
 
 (defn binary
   [x]
@@ -109,7 +110,9 @@
         (group-by :idx))])
 
 (defn res []
-  (let [data (->> (jdbc/query
+  "对数据库中保存的data求解，将其规范化为(0, 1)并给出与正值的对照"
+  (let [db (pg/spec :dbname "qcon")
+        data (->> (jdbc/query
                     db
                     ["select group_id, idx, alpha from ml.resolve() where layer = 3;"])
                   (map #(update % :alpha binary))
